@@ -1,0 +1,45 @@
+name: ipweb-static
+
+services:
+  nginx:
+    image: nginx:1.28-alpine
+    restart: unless-stopped
+    environment:
+      PUBLIC_IP: ${PUBLIC_IP:?Set PUBLIC_IP in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/http.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/static-https.conf:/config/https.conf:ro
+      - ./scripts/nginx-entrypoint.sh:/scripts/nginx-entrypoint.sh:ro
+      - ./html:/usr/share/nginx/html:ro
+      - acme-webroot:/var/www/certbot:ro
+      - letsencrypt:/etc/letsencrypt:ro
+    entrypoint: ["/bin/sh", "/scripts/nginx-entrypoint.sh"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  certbot:
+    image: certbot/certbot:v5.4.0
+    restart: unless-stopped
+    environment:
+      PUBLIC_IP: ${PUBLIC_IP:?Set PUBLIC_IP in .env}
+      CERTBOT_EMAIL: ${CERTBOT_EMAIL:?Set CERTBOT_EMAIL in .env}
+    volumes:
+      - ./scripts/certbot-loop.sh:/scripts/certbot-loop.sh:ro
+      - acme-webroot:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
+      - certbot-work:/var/lib/letsencrypt
+    entrypoint: ["/bin/sh", "/scripts/certbot-loop.sh"]
+    depends_on:
+      nginx:
+        condition: service_healthy
+
+volumes:
+  acme-webroot:
+  letsencrypt:
+  certbot-work:
