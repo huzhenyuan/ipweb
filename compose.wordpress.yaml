@@ -2,7 +2,7 @@ name: ipweb-wordpress
 
 services:
   nginx:
-    image: nginx:1.28-alpine
+    image: ${NGINX_IMAGE:-docker.io/library/nginx:1.28-alpine}
     restart: unless-stopped
     environment:
       PUBLIC_IP: ${PUBLIC_IP:?Set PUBLIC_IP in .env}
@@ -10,9 +10,9 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/http.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./nginx/wordpress-https.conf:/config/https.conf:ro
-      - ./scripts/nginx-entrypoint.sh:/scripts/nginx-entrypoint.sh:ro
+      - ./nginx/http.conf:/etc/nginx/conf.d/default.conf:ro,z
+      - ./nginx/wordpress-https.conf:/config/https.conf:ro,z
+      - ./scripts/nginx-entrypoint.sh:/scripts/nginx-entrypoint.sh:ro,z
       - acme-webroot:/var/www/certbot:ro
       - letsencrypt:/etc/letsencrypt:ro
     entrypoint: ["/bin/sh", "/scripts/nginx-entrypoint.sh"]
@@ -25,13 +25,13 @@ services:
       - wordpress
 
   certbot:
-    image: certbot/certbot:v5.4.0
+    image: ${CERTBOT_IMAGE:-docker.io/certbot/certbot:v5.4.0}
     restart: unless-stopped
     environment:
       PUBLIC_IP: ${PUBLIC_IP:?Set PUBLIC_IP in .env}
       CERTBOT_EMAIL: ${CERTBOT_EMAIL:?Set CERTBOT_EMAIL in .env}
     volumes:
-      - ./scripts/certbot-loop.sh:/scripts/certbot-loop.sh:ro
+      - ./scripts/certbot-loop.sh:/scripts/certbot-loop.sh:ro,z
       - acme-webroot:/var/www/certbot
       - letsencrypt:/etc/letsencrypt
       - certbot-work:/var/lib/letsencrypt
@@ -41,7 +41,7 @@ services:
         condition: service_healthy
 
   wordpress:
-    image: wordpress:php8.3-apache
+    image: ${WORDPRESS_IMAGE:-docker.io/library/wordpress:php8.3-apache}
     restart: unless-stopped
     environment:
       WORDPRESS_DB_HOST: db:3306
@@ -61,7 +61,7 @@ services:
       - db
 
   db:
-    image: mariadb:11.4
+    image: ${MARIADB_IMAGE:-docker.io/library/mariadb:11.4}
     restart: unless-stopped
     environment:
       MARIADB_DATABASE: ${DB_NAME:?Set DB_NAME in .env}

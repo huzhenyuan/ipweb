@@ -1,4 +1,4 @@
-# Let's Encrypt IP 证书 Docker Compose 示例
+# Let's Encrypt IP 证书 Docker / Podman Compose 示例
 
 提供两套独立示例：`compose.static.yaml` 运行 Nginx 静态页面，`compose.wordpress.yaml` 运行 WordPress、MariaDB 和 Nginx。两套配置共用证书脚本，但各自使用独立的 Compose 项目和数据卷。**同一台机器同一时间只能启动其中一套**，因为两套都占用宿主机的 80 和 443 端口。
 
@@ -6,16 +6,63 @@ Let’s Encrypt 的 IP 证书有效期为 160 小时，必须使用 `shortlived`
 
 ## 准备
 
-1. 安装 Docker Engine 和 Docker Compose 插件。
+1. 安装 Docker Engine 和 Docker Compose 插件，或安装 Podman 和一个 Compose 提供者（Docker Compose 插件或 `podman-compose`）。`podman compose` 本身会调用这个外部提供者。
 2. 将一个**公网 IPv4 地址**分配到这台服务器，并确保互联网能访问该地址的 **TCP 80 和 443**。检查云安全组、系统防火墙及其他占用端口的程序。此示例按 IPv4 URL 编写。
 3. 复制配置并填写实际 IP 和邮箱：
 
    ```sh
-   cp .env.example .env
+   cp -n .env.example .env
    nano .env
    ```
 
-   `203.0.113.10` 是文档保留地址，不能用来申请证书。`CERTBOT_EMAIL` 是 Let's Encrypt 注册邮箱。使用 WordPress 时，也要把 `WP_SITE_URL` 改为 `https://你的公网IP`，并更换两个数据库密码。
+   如果 `.env` 已存在，直接编辑原文件。`203.0.113.10` 是文档保留地址，不能用来申请证书。`CERTBOT_EMAIL` 是 Let's Encrypt 注册邮箱。使用 WordPress 时，也要把 `WP_SITE_URL` 改为 `https://你的公网IP`，并更换两个数据库密码。
+
+## 用 Podman 启动
+
+这两份 Compose 文件也可直接给 Podman 使用。因为宿主机要监听 80/443，下面以 **rootful Podman** 为例。若 `podman compose` 使用 Docker Compose 作为外部提供者，先启用 Podman API socket：
+
+```sh
+sudo systemctl enable --now podman.socket
+cp -n .env.example .env
+# 编辑 .env 中的 IP、邮箱、WordPress URL 和密码
+sudo podman compose --env-file .env -f compose.static.yaml up -d
+# WordPress 则将文件名改为 compose.wordpress.yaml
+sudo podman compose --env-file .env -f compose.static.yaml logs -f certbot nginx
+```
+
+`restart: unless-stopped` 负责容器意外退出后的重启。为了让 Podman 容器在宿主机重启后也恢复运行，启用系统提供的重启服务：
+
+```sh
+sudo systemctl enable podman-restart.service
+```
+
+如果想使用 rootless Podman，需要先让普通用户能够绑定 80 端口。以下设置会把**整台宿主机**的非特权端口起点改为 80；确认符合你的主机策略后再执行：
+
+```sh
+printf 'net.ipv4.ip_unprivileged_port_start=80\n' | sudo tee /etc/sysctl.d/90-podman-low-ports.conf
+sudo sysctl --system
+systemctl --user enable --now podman.socket  # 使用 Docker Compose 提供者时需要
+systemctl --user enable podman-restart.service
+sudo loginctl enable-linger "$USER"
+podman compose --env-file .env -f compose.static.yaml up -d
+```
+
+项目中的宿主机绑定挂载已加 `:z`，以适配启用 SELinux 的 Podman 主机。Docker 与 Podman 的镜像、命名卷各自独立；已有 WordPress 数据不会自动迁移。
+
+## 改用国内镜像源
+
+最直接的方法是使用完整的国内镜像地址，无需修改系统的全局镜像配置：
+
+```sh
+cp -n .env.cn.example .env
+# 编辑 .env 中的 IP、邮箱、WordPress URL 和密码
+sudo podman compose --env-file .env -f compose.static.yaml pull
+sudo podman compose --env-file .env -f compose.static.yaml up -d
+```
+
+`.env.cn.example` 将 Nginx、WordPress、MariaDB 和 Certbot 的镜像指向 DaoCloud 的 `m.daocloud.io`。如果 `.env` 已存在，不要覆盖它；将国内示例中的四个 `*_IMAGE` 值复制到现有 `.env` 即可。切换 WordPress 时，把命令中的 Compose 文件名换成 `compose.wordpress.yaml`。若镜像地址不可用，可以在 `.env` 中分别修改 `NGINX_IMAGE`、`WORDPRESS_IMAGE`、`MARIADB_IMAGE`、`CERTBOT_IMAGE`，填入其他已验证的仓库完整地址。**Certbot 必须为 5.4 或更新版本**，因为较早版本不支持 IP 证书的 webroot 验证。DaoCloud 的公开仓库列表未列出 `certbot/certbot`；本示例的 Certbot 镜像曾成功拉取，但该地址未来是否持续可用取决于镜像站。如果无法拉取，可将相同版本的官方镜像同步到自己的国内仓库，再修改 `CERTBOT_IMAGE`。
+
+Podman 也支持在 `registries.conf` 中配置 Docker Hub 镜像站；该方式会影响当前用户或整台机器的镜像拉取。此项目采用 `.env` 中的逐镜像地址，便于核对每个镜像的来源。镜像源只影响**容器镜像下载**；申请和续期证书时仍需让 Certbot 访问 Let's Encrypt 的 ACME 服务。
 
 ## 静态页面
 
